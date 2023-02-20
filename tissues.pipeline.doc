@@ -1,0 +1,182 @@
+Genomic assembly used:  apl_flye2.5.polished.polca_HiC.gapclose.v2.fa.gz
+
+=============================================
+= de novo Trinity
+=============================================
+Trinity-v2.11.0
+
+Example command:
+[jorvis@grid-1-1-1 A5]$ export TRINITY_HOME=/usr/local/common/Trinity-2.11.0
+[jorvis@grid-1-1-1 A5]$ $TRINITY_HOME/Trinity --seqType fq --max_memory 48G --left IL100038436.R1.trimmed.PE.fastq --right IL100038436.R2.trimmed.PE.fastq --CPU 8 >& trinity.run.out
+
+=============================================
+= Transrate - Trinity-DN
+=============================================
+export PATH=/usr/local/common/transrate/bin:$PATH
+
+/usr/local/common/transrate/transrate --assembly Trinity-DN.fasta --left left.norm.fq --right right.norm.fq --threads 8 --output Trinity-DN
+
+ln -s transrate/dn-trinity.$SAMPLE/dn-trinity.$SAMPLE/good.dn-trinity.$SAMPLE.fasta $SAMPLE.dn-trinity.transrate.good.fasta
+
+
+
+=============================================
+= StringTie
+=============================================
+
+mkdir /local/projects-t3/aplysia/assemblies/tissues/stringtie
+
+/usr/local/packages/hisat2-2.1.0/hisat2-build -f -p 4 genome.fasta genome
+export PATH=/usr/local/packages/hisat2-2.1.0:$PATH
+
+export SAMPLE=A2
+mkdir /local/scratch/jorvis/aplysia/tissues/$SAMPLE/stringtie
+cd !$
+
+/usr/local/packages/hisat2-2.1.0/hisat2 -p 16 --no-unal --downstream-transcriptome-assembly -x ../../../genome -1 ../left.norm.fq -2 ../right.norm.fq -S ${SAMPLE}_trinity.norm.hisat2.sam
+
+samtools view -bS ${SAMPLE}_trinity.norm.hisat2.sam | samtools sort -@ 4 -m 20G -o ${SAMPLE}_trinity.norm.hisat2.sorted
+
+/usr/local/common/stringtie-2.1.1/stringtie ${SAMPLE}_trinity.norm.hisat2.sorted -o stringtie.$SAMPLE.norm.gtf -p 16
+
+# cleanup
+rm ${SAMPLE}_trinity.norm.hisat2.sam
+cp stringtie.$SAMPLE.norm.gtf /local/projects-t3/aplysia/assemblies/tissues/stringtie
+
+=============================================
+= genome-guided Trinity
+=============================================
+
+mkdir /local/projects-t3/aplysia/assemblies/tissues/gg-trinity
+
+export SAMPLE=A2
+mkdir /local/scratch/jorvis/aplysia/tissues/$SAMPLE/trinity-gg
+cd !$
+
+ln -s ../stringtie/${SAMPLE}_trinity.norm.hisat2.sorted hisat.bam
+
+export PATH=/usr/local/common/Python-2.7.16/bin:$PATH
+export TRINITY_HOME=/usr/local/common/Trinity-2.11.0
+/usr/local/common/Trinity-2.11.0/Trinity --genome_guided_bam hisat.bam --genome_guided_max_intron 20000 --max_memory 100G --CPU 24
+
+cp trinity_out_dir/Trinity-GG.fasta /local/projects-t3/aplysia/assemblies/tissues/gg-trinity/gg-trinity.$SAMPLE.fasta
+rm -rf trinity_out_dir
+
+=============================================
+= PASA alignment assembly, then generate comprehensive transcriptome (on home machine)
+=============================================
+
+export SAMPLE=A2
+export PASA_HOME=/home/jorvis/git/PASApipeline
+
+mkdir /usr/local/projects/aplysia/PASA/tissues/$SAMPLE
+rm current && ln -s $SAMPLE current
+cd $SAMPLE
+
+igsget /local/projects-t3/aplysia/reads/$SAMPLE/left.norm.fq .
+igsget /local/projects-t3/aplysia/reads/$SAMPLE/right.norm.fq .
+
+# create the alignAssembly.config
+
+# Get the assemblies, then merge the trinity
+igsget /local/projects-t3/aplysia/assemblies/tissues/stringtie/stringtie.$SAMPLE.norm.gtf stringtie.gtf
+igsget /local/projects-t3/aplysia/assemblies/tissues/dn-trinity/dn-trinity.$SAMPLE.fasta .
+igsget /local/projects-t3/aplysia/assemblies/tissues/gg-trinity/gg-trinity.$SAMPLE.fasta .
+cat dn-trinity.$SAMPLE.fasta gg-trinity.$SAMPLE.fasta > transcripts.fasta
+
+ln -s ../genome.fasta .
+
+# Extract accessions for only the de novo assembly
+$PASA_HOME/misc_utilities/accession_extractor.pl < dn-trinity.$SAMPLE.fasta > tdn.accs
+
+# do standard alignment assembly
+# (make sure to run make first in the updated PASA github)
+$PASA_HOME/bin/seqclean dn-trinity.$SAMPLE.fasta
+$PASA_HOME/Launch_PASA_pipeline.pl -c alignAssembly.config -C -R -g genome.fasta -t dn-trinity.$SAMPLE.fasta.clean -T -u dn-trinity.$SAMPLE.fasta --ALIGNERS blat,gmap,minimap2 --CPU 2 --TDN tdn.accs
+
+## The step above can fail with a memory error. If so, manually run the minimap2 idx creation step on a higher mem machine
+#   If so, this is what that looks like:
+gzip genome.fasta
+igsput genome.fasta.gz /local/scratch/jorvis/aplysia/tissues/$SAMPLE/PASA/
+gunzip genome.fasta.gz
+
+# and on server:
+cd /local/scratch/jorvis/aplysia/tissues/$SAMPLE/PASA/
+gunzip genome.fasta.gz
+minimap2 -d genome.fasta.mmi -t 4 genome.fasta
+# Then transfer the file back, create the .ok file, then restart Launch_PASA_pipeline.pl
+
+# create comprehensive merge
+/home/jorvis/git/PASApipeline/scripts/build_comprehensive_transcriptome.dbi -c alignAssembly.config -t transcripts.fasta --cufflinks_gtf stringtie.gtf --min_per_ID 95 --min_per_aligned 30
+
+
+=============================================
+= Transrate - PASA comprehensive
+=============================================
+export PATH=/usr/local/common/transrate/bin:$PATH
+
+/usr/local/common/transrate/transrate --assembly $SAMPLE.pasa.comprehensive.fasta --left left.norm.fq --right right.norm.fq --threads 8 --output $SAMPLE.pasa.comprehensive
+
+Writing contig metrics for each contig to /autofs/scratch/jorvis/aplysia/tissues/pasa_transrate/A2/A2.pasa.comprehensive/A2.pasa.comprehensive/contigs.csv
+[ INFO] 2023-01-23 11:14:57 : Writing analysis results to assemblies.csv
+
+cp $SAMPLE.pasa.comprehensive/$SAMPLE.pasa.comprehensive/good.$SAMPLE.pasa.comprehensive.fasta $SAMPLE.pasa.comprehensive.transrategood.fasta
+
+=============================================
+= Merge DN-Trinity transrate with PASA transrate
+=============================================
+
+export SAMPLE=A10
+grep TRINITY $SAMPLE.pasa.comprehensive.transrategood.fasta | sed 's/>//' > trinity.ids.in.comprehensive
+~/git/biocode/fasta/filter_fasta_by_ids.pl -l trinity.ids.in.comprehensive -f $SAMPLE.dn-trinity.transrate.good.fasta -m exclude -o $SAMPLE.dn.notinpasa.fasta
+cat $SAMPLE.pasa.comprehensive.transrategood.fasta $SAMPLE.dn.notinpasa.fasta > $SAMPLE.pasa.dn-trinity.merged.fasta
+
+# this changes based on mapping: A2:salivary A3:digestive A5:hepatopancreas A7:heart A8:muscle A10:hermaphroditic
+~/git/biocode/fasta/prepend_to_fasta_header.py -p hermaphroditic. -i $SAMPLE.pasa.dn-trinity.merged.fasta -o $SAMPLE.pasa.dn-trinity.merged.reid.fasta
+gzip $SAMPLE.pasa.dn-trinity.merged.reid.fasta
+ 
+[now on local machine]
+
+igsget /local/scratch/jorvis/aplysia/tissues/$SAMPLE/$SAMPLE.pasa.dn-trinity.merged.reid.fasta.gz .
+gunzip $SAMPLE.pasa.dn-trinity.merged.reid.fasta.gz
+
+# clean up
+rm -rf sample_my* seqcl_dn-trinity.$SAMPLE.fasta.log tmp-* dn-trinity.$SAMPLE.fasta.c* 11.ooc genome.fasta.gmap genome.fasta.mm2 gmap.* minimap2.* outparts_cln.sort pasa_run.log.dir __pasa_sample_mydb_pasa.sqlite_SQLite_chkpts __pasa_sample_mydb_pasa.sqlite_SQLite_chkpts.cmds_log pblat_outdir pipeliner.* cleaning_1 compreh_init_build blat.spliced_alignments.gff3 alignment.validations.output
+
+=============================================
+= Transdecoder
+=============================================
+
+(on my home machine)
+export SAMPLE=A10
+/opt/TransDecoder-TransDecoder-v5.5.0/TransDecoder.LongOrfs -t $SAMPLE.pasa.dn-trinity.merged.reid.fasta -O transdecoder_pass1
+mv transdecoder_pass1/longest_orfs.cds $SAMPLE.pasa.dn-trinity.merged.reid.longestorfs.cds
+mv transdecoder_pass1/longest_orfs.pep $SAMPLE.pasa.dn-trinity.merged.reid.longestorfs.pep
+
+# clean up
+rm -rf transdecoder_pass1 transdecoder_pass1.__checkpoints_longorfs
+
+=============================================
+= CD-HIT-EST
+=============================================
+
+/home/jorvis/git/biocode/fasta/filter_fasta_by_header_regex.py -i $SAMPLE.pasa.dn-trinity.merged.reid.longestorfs.cds -o $SAMPLE.transrate.good.longestorfs.p1.cds -r '\.p1 type'
+cd-hit-est -i $SAMPLE.transrate.good.longestorfs.p1.cds -o $SAMPLE.transrate.good.longestorfs.p1.cdhitest.fasta -c 0.97 -G 0 -l 300 -aL 0.35 -AL 99999999 -aS 0.35 -AS 99999999 -A 0 -g 1 -r 1 -mask NX -M 8000 -T 3 -d 0
+
+=============================================
+= Call unigenes
+=============================================
+
+/home/jorvis/git/AplysiaScripts/bin/call_unigenes.py -if $SAMPLE.pasa.dn-trinity.merged.reid.fasta -c $SAMPLE.transrate.good.longestorfs.p1.cdhitest.fasta.clstr -o $SAMPLE.transrate.good.longestorfs.p1.cdhitest.unigenes.ids
+
+/home/jorvis/git/biocode/fasta/filter_fasta_by_ids.pl --id_list $SAMPLE.transrate.good.longestorfs.p1.cdhitest.unigenes.ids --fasta_file $SAMPLE.pasa.dn-trinity.merged.reid.fasta --output_file $SAMPLE.transrate.good.longestorfs.p1.cdhitest.unigenes.fasta
+
+=============================================
+= Create a merged set
+=============================================
+
+cd /usr/local/projects/aplysia/PASA/tissues
+cat */*.cdhitest.unigenes.fasta > merged/tissue.unigenes.marged.flow4.fasta
+
+cd merged
+cd-hit-est -i tissue.unigenes.marged.flow4.fasta -o tissue.unigenes.marged.flow4.cdhitest.fasta -c 0.97 -G 0 -l 300 -aL 0.35 -AL 99999999 -aS 0.35 -AS 99999999 -A 0 -g 1 -r 1 -mask NX -M 8000 -T 3 -d 0

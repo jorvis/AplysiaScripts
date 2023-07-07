@@ -18,13 +18,13 @@ current_cluster_rep = None
 cluster_count = 0
 longest_orf = dict()
 cluster_categories = {
-    'cns_only': 0,
-    'both_cns_wins': 0,
-    'both_peripheral_wins': 0,
-    'peripheral_only': 0,
-    'ovo_only': 0,
-    'peripheral_with_ovo': 0,
-    'peripheral_sans_ovo': 0
+    'cns_only': [],
+    'both_cns_wins': [],
+    'both_peripheral_wins': [],
+    'peripheral_only': [],
+    'ovo_only': [],
+    'peripheral_with_ovo': [],
+    'peripheral_sans_ovo': []
 }
 
 def process_cluster(ids, rep):
@@ -57,34 +57,41 @@ def process_cluster(ids, rep):
 
     ## CNS only
     if has_CNS and not has_nonCNS:
-        cluster_categories['cns_only'] += 1
+        #cluster_categories['cns_only'] += 1
+        cluster_categories['cns_only'].append(longest_orf_id)
         print("Winner: CNS only\n")
 
     ## Both
     elif has_CNS and has_nonCNS:
         # but CNS wins
         if longest_orf_id.startswith('CNS'):
-            cluster_categories['both_cns_wins'] += 1
+            #cluster_categories['both_cns_wins'] += 1
+            cluster_categories['both_cns_wins'].append(longest_orf_id)
             print("Winner: Both, CNS wins\n")
             
         ## but peripheral wins
         else:
-            cluster_categories['both_peripheral_wins'] += 1
+            #cluster_categories['both_peripheral_wins'] += 1
+            cluster_categories['both_peripheral_wins'].append(longest_orf_id)
             print("Winner: Both, periphery wins\n")
 
     ## Peripheral only
     else:
-        cluster_categories['peripheral_only'] += 1
+        #cluster_categories['peripheral_only'] += 1
+        cluster_categories['peripheral_only'].append(longest_orf_id)
         print("Winner: Peripheral only\n")
 
         # We want a sub-filter to discern mixed peripheral vs Ovotestis only
         if ovo_count:
             if ovo_count == len(ids):
-                cluster_categories['ovo_only'] += 1
+                #cluster_categories['ovo_only'] += 1
+                cluster_categories['ovo_only'].append(longest_orf_id)
             else:
-                cluster_categories['peripheral_with_ovo'] += 1
+                #cluster_categories['peripheral_with_ovo'] += 1
+                cluster_categories['peripheral_with_ovo'].append(longest_orf_id)
         else:
-            cluster_categories['peripheral_sans_ovo'] += 1
+            #cluster_categories['peripheral_sans_ovo'] += 1
+            cluster_categories['peripheral_sans_ovo'].append(longest_orf_id)
             
     
 for orf_file in ORF_FILES:
@@ -136,4 +143,12 @@ print("total seq: {0}".format(len(longest_orf)))
 print("total clusters: {0}".format(cluster_count))
 
 for category in cluster_categories:
-    print("{0}\t{1}".format(category, cluster_categories[category]))
+    print("{0}\t{1}".format(category, len(cluster_categories[category])))
+
+    filename = "categorial_cluster_winner_ids.{0}".format(category)
+    ofh = open(filename, 'wt')
+
+    for id in cluster_categories[category]:
+        ofh.write("{0}\n".format(id))
+    
+    ofh.close()
